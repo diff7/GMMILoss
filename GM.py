@@ -65,11 +65,10 @@ class GaussianMixture(torch.nn.Module):
         n_components,
         n_features,
         covariance_type="full",
-        eps=1.0e-6,
+        eps=1.0e-3,
         init_means="random",
         mu_init=None,
         var_init=None,
-        device="cpu",
         verbose=True,
     ):
         """
@@ -113,12 +112,8 @@ class GaussianMixture(torch.nn.Module):
         assert self.covariance_type in ["full", "diag"]
         assert self.init_means in ["kmeans", "random"]
 
-        self.device = device
         self.verbose = verbose
         self._init_params()
-
-    def _to_device(self, x):
-        return torch.tensor(x, device=self.device)
 
     def _init_params(self):
         if self.mu_init is not None:
@@ -132,10 +127,9 @@ class GaussianMixture(torch.nn.Module):
             )
             # (1, k, d)
             self.mu = torch.nn.Parameter(self.mu_init, requires_grad=True)
-            self.mu = self._to_device(self.mu)
         else:
             self.mu = torch.nn.Parameter(
-                torch.randn(1, self.n_components, self.n_features, device=self.device),
+                torch.randn(1, self.n_components, self.n_features),
                 requires_grad=True,
             )
 
@@ -151,14 +145,16 @@ class GaussianMixture(torch.nn.Module):
                     % (self.n_components, self.n_features)
                 )
                 self.var = torch.nn.Parameter(self.var_init, requires_grad=True)
-                self.var = self._to_device(self.var)
             else:
                 self.var = torch.nn.Parameter(
                     torch.ones(
-                        1, self.n_components, self.n_features, device=self.device
+                        1,
+                        self.n_components,
+                        self.n_features,
                     ),
                     requires_grad=True,
                 )
+
         elif self.covariance_type == "full":
             if self.var_init is not None:
                 # (1, k, d, d)
@@ -172,7 +168,6 @@ class GaussianMixture(torch.nn.Module):
                     % (self.n_components, self.n_features, self.n_features)
                 )
                 self.var = torch.nn.Parameter(self.var_init, requires_grad=False)
-                self.var = self._to_device(self.var)
             else:
                 self.var = torch.nn.Parameter(
                     torch.eye(self.n_features)
@@ -183,9 +178,7 @@ class GaussianMixture(torch.nn.Module):
 
         # (1, k, 1)
         self.pi = torch.nn.Parameter(
-            torch.Tensor(1, self.n_components, 1, device=self.device).fill_(
-                1.0 / self.n_components
-            ),
+            torch.Tensor(1, self.n_components, 1).fill_(1.0 / self.n_components),
             requires_grad=True,
         )
 
@@ -206,25 +199,30 @@ class GaussianMixture(torch.nn.Module):
             self.var.data = self.var_chached.data
 
         else:
+            device = self.mu.data.device
             max_dimension = self.mu_chached.shape[-1]
             assert any(
                 [~(idx <= max_dimension) for idx in indices]
             ), f"One of provided indices {indices} is higher than a number of dimensions the model was fitted on {max_dimension}."
 
-            self.mu.data = torch.zeros(1, self.n_components, len(indices))
+            self.mu.data = torch.zeros(
+                1, self.n_components, len(indices), device=device
+            )
             for i, ii in enumerate(indices):
                 self.mu.data[:, :, i] = self.mu_chached[:, :, ii]
 
-            if self.covariance_type is "full":
+            if self.covariance_type == "full":
                 self.var.data = torch.zeros(
-                    1, self.n_components, len(indices), len(indices)
+                    1, self.n_components, len(indices), len(indices), device=device
                 )
 
                 for i, ii in enumerate(indices):
                     for j, jj in enumerate(indices):
                         self.var.data[:, :, i, j] = self.var_chached[:, :, ii, jj]
             else:
-                self.var.data = torch.zeros(1, self.n_components, len(indices))
+                self.var.data = torch.zeros(
+                    1, self.n_components, len(indices), device=device
+                )
                 for i, ii in enumerate(indices):
                     self.mu_chached.data[:, :, i] = self.var[:, :, ii]
 
@@ -304,8 +302,7 @@ class GaussianMixture(torch.nn.Module):
                     var_init=self.var_init,
                     eps=self.eps,
                 )
-                for p in self.parameters():
-                    p.data = self._to_device(p.data)
+
                 if self.init_means == "kmeans":
                     (self.mu.data,) = self.get_kmeans_mu(x, n_centers=self.n_components)
 
@@ -331,7 +328,7 @@ class GaussianMixture(torch.nn.Module):
         optimizer = torch.optim.Adam([self.pi, self.mu, self.var], lr=learning_rate)
 
         # Initialise the minimum loss at infinity.
-        x = self._to_device(x)
+        # x = self._to_device(x)
         # Iterate over the number of iterations.
         for i in range(n_iter):
             optimizer.zero_grad()
@@ -451,8 +448,8 @@ class GaussianMixture(torch.nn.Module):
         x = self.check_size(x)
 
         if self.covariance_type == "full":
-            mu = self.mu
-            var = self.var
+            mu = self.mu.detach()
+            var = self.var.detach()
 
             if var.shape[2] == 1:
                 precision = 1 / var
@@ -585,7 +582,7 @@ class GaussianMixture(torch.nn.Module):
             (or)
             per_sample_score:   torch.Tensor (n)
         """
-        weighted_log_prob = self._estimate_log_prob(x) + torch.log(self.pi)
+        weighted_log_prob = self._estimate_log_prob(x) + torch.log(self.pi).detach()
         per_sample_score = torch.logsumexp(weighted_log_prob, dim=1)
 
         if as_average:
@@ -722,7 +719,7 @@ class GaussianMixture(torch.nn.Module):
 
             delta = torch.norm((center_old - center), dim=1).max()
 
-        return self._to_device(center.unsqueeze(0) * (x_max - x_min) + x_min)
+        return center.unsqueeze(0) * (x_max - x_min) + x_min
 
     def print_verbose(self, string):
         if self.verbose:

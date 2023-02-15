@@ -8,15 +8,14 @@ class MIGM(GaussianMixture):
         n_components,
         n_features,
         covariance_type="full",
-        eps=1.0e-6,
+        eps=1.0e-3,
         init_means="kmeans",
         mu_init=None,
         var_init=None,
-        device="cpu",
         verbose=True,
         fit_mode="em",
-        n_iter=3e2,
-        delta=1e-5,
+        n_iter=1e2,
+        delta=1e-3,
         learning_rate=1e-2,
         warm_start=False,
     ):
@@ -29,7 +28,6 @@ class MIGM(GaussianMixture):
             init_means,
             mu_init,
             var_init,
-            device,
             verbose,
         )
 
@@ -61,11 +59,11 @@ class MIGM(GaussianMixture):
         """
 
         self.joint = self.logscore_samples(data_joint)
-
-        sample_a = torch.index_select(data_joint, 1, torch.tensor(indices_a))
+        device = data_joint.device
+        sample_a = torch.index_select(data_joint, 1, torch.tensor(indices_a).to(device))
         self.a = self.logscore_samples(sample_a, indices_a)
 
-        sample_b = torch.index_select(data_joint, 1, torch.tensor(indices_b))
+        sample_b = torch.index_select(data_joint, 1, torch.tensor(indices_b).to(device))
         self.b = self.logscore_samples(sample_b, indices_b)
 
         mi = (self.joint - self.a - self.b).mean()
