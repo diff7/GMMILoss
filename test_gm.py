@@ -16,7 +16,7 @@ from GM import GaussianMixture
 def main():
     n_components = 10
     n, d = 1500, 2
-    use_plots = False
+    use_plots = True
 
     data = []
     for i in range(n_components):
