@@ -8,16 +8,18 @@ class MIGM(GaussianMixture):
         n_components,
         n_features,
         covariance_type="full",
-        eps=1.0e-3,
+        eps=1.0e-6,
+        cov_reg=1e-6,
         init_means="kmeans",
         mu_init=None,
         var_init=None,
         verbose=True,
         fit_mode="em",
         n_iter=1e2,
-        delta=1e-3,
+        delta=1e-6,
         learning_rate=1e-2,
         warm_start=False,
+        device="cpu",
     ):
 
         super().__init__(
@@ -25,10 +27,12 @@ class MIGM(GaussianMixture):
             n_features,
             covariance_type,
             eps,
+            cov_reg,
             init_means,
             mu_init,
             var_init,
             verbose,
+            device,
         )
 
         assert fit_mode in [

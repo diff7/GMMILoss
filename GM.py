@@ -65,11 +65,13 @@ class GaussianMixture(torch.nn.Module):
         n_components,
         n_features,
         covariance_type="full",
-        eps=1.0e-3,
-        init_means="random",
+        eps=1.0e-8,
+        cov_reg=1e-6,
+        init_means="kmeans",
         mu_init=None,
         var_init=None,
         verbose=True,
+        device="cpu",
     ):
         """
         Initializes the model and brings all tensors into their required shape.
@@ -108,11 +110,13 @@ class GaussianMixture(torch.nn.Module):
 
         self.covariance_type = covariance_type
         self.init_means = init_means
+        self.cov_reg = cov_reg
 
         assert self.covariance_type in ["full", "diag"]
         assert self.init_means in ["kmeans", "random"]
 
         self.verbose = verbose
+        self.device = device
         self._init_params()
 
     def _init_params(self):
@@ -182,7 +186,10 @@ class GaussianMixture(torch.nn.Module):
             requires_grad=True,
         )
 
-        self.params = [self.pi, self.mu, self.var]
+        self.mu.to(self.device)
+        self.var.to(self.device)
+        self.pi.to(self.device)
+
         self.fitted = False
 
     def _finish_optimization(self):
@@ -208,6 +215,7 @@ class GaussianMixture(torch.nn.Module):
             self.mu.data = torch.zeros(
                 1, self.n_components, len(indices), device=device
             )
+
             for i, ii in enumerate(indices):
                 self.mu.data[:, :, i] = self.mu_chached[:, :, ii]
 
@@ -268,6 +276,7 @@ class GaussianMixture(torch.nn.Module):
             n_iter:     int
             warm_start: bool
         """
+
         if not warm_start and self.fitted:
             self._init_params()
 
@@ -289,22 +298,12 @@ class GaussianMixture(torch.nn.Module):
             self.__em(x)
             self.log_likelihood = self.__score(x)
             self.print_verbose(f"score {self.log_likelihood.item()}")
+
             if torch.isinf(self.log_likelihood.abs()) or torch.isnan(
                 self.log_likelihood
             ):
-
                 # When the log-likelihood assumes unbound values, reinitialize model
-                self.__init__(
-                    self.n_components,
-                    self.n_features,
-                    covariance_type=self.covariance_type,
-                    mu_init=self.mu_init,
-                    var_init=self.var_init,
-                    eps=self.eps,
-                )
-
-                if self.init_means == "kmeans":
-                    (self.mu.data,) = self.get_kmeans_mu(x, n_centers=self.n_components)
+                self.__reset(x)
 
             i += 1
             j = self.log_likelihood - log_likelihood_old
@@ -315,6 +314,12 @@ class GaussianMixture(torch.nn.Module):
                 self.__update_var(var_old)
 
         self._finish_optimization()
+
+    def __reset(self, x):
+        print("RESET")
+        self._init_params()
+        if self.init_means == "kmeans":
+            self.mu.data = self.get_kmeans_mu(x, n_centers=self.n_components)
 
     def fit_grad(self, x, n_iter=1000, learning_rate=1e-1):
 
@@ -448,8 +453,8 @@ class GaussianMixture(torch.nn.Module):
         x = self.check_size(x)
 
         if self.covariance_type == "full":
-            mu = self.mu.detach()
-            var = self.var.detach()
+            mu = self.mu.detach().to(x.device)
+            var = self.var.detach().to(x.device)
 
             if var.shape[2] == 1:
                 precision = 1 / var
@@ -490,12 +495,17 @@ class GaussianMixture(torch.nn.Module):
             var:            torch.Tensor (1, k, d, d)
         """
         log_det = torch.empty(size=(self.n_components,)).to(var.device)
-
         for k in range(self.n_components):
-            log_det[k] = (
-                2 * torch.log(torch.diagonal(torch.linalg.cholesky(var[0, k]))).sum()
-            )
-
+            try:
+                dI = self.cov_reg * torch.eye(var[0, k].shape[0]).to(var.device)
+                log_det[k] = (
+                    2
+                    * torch.log(
+                        torch.diagonal(torch.linalg.cholesky(var[0, k] + dI))
+                    ).sum()
+                )
+            except:
+                log_det[k] = torch.logdet(var[0, k])
         return log_det.unsqueeze(-1)
 
     def _e_step(self, x):
@@ -555,7 +565,6 @@ class GaussianMixture(torch.nn.Module):
             var = x2 - 2 * xmu + mu2 + self.eps
 
         pi = pi / x.shape[0]
-
         return pi, mu, var
 
     def __em(self, x):
@@ -582,7 +591,10 @@ class GaussianMixture(torch.nn.Module):
             (or)
             per_sample_score:   torch.Tensor (n)
         """
-        weighted_log_prob = self._estimate_log_prob(x) + torch.log(self.pi).detach()
+
+        weighted_log_prob = self._estimate_log_prob(x) + torch.log(self.pi).detach().to(
+            x.device
+        )
         per_sample_score = torch.logsumexp(weighted_log_prob, dim=1)
 
         if as_average:
@@ -668,10 +680,9 @@ class GaussianMixture(torch.nn.Module):
             self.n_components,
             1,
         )
-
         self.pi.data = pi
 
-    def get_kmeans_mu(self, x, n_centers, init_times=50, min_delta=1e-3):
+    def get_kmeans_mu(self, x, n_centers, init_times=2, min_delta=1e-2):
         """
         Find an initial value for the mean. Requires a threshold min_delta for the k-means algorithm to stop iterating.
         The algorithm is repeated init_times often, after which the best centerpoint is returned.
@@ -687,6 +698,10 @@ class GaussianMixture(torch.nn.Module):
 
         min_cost = np.inf
 
+        center = x[
+            np.random.choice(np.arange(x.shape[0]), size=n_centers, replace=False),
+            ...,
+        ]
         for i in range(init_times):
             tmp_center = x[
                 np.random.choice(np.arange(x.shape[0]), size=n_centers, replace=False),

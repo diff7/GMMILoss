@@ -14,8 +14,9 @@ from GM import GaussianMixture
 
 
 def main():
-    n_components = 1
-    n, d = 100, 2
+    n_components = 10
+    n, d = 1500, 2
+    use_plots = False
 
     data = []
     for i in range(n_components):
@@ -30,26 +31,24 @@ def main():
         data.append(torch.cat([x_, y_], 1))
 
     data = torch.cat(data, 0)
-    print(data.shape)
-    # Next, the Gaussian mixture is instantiated and ..
 
     model = GaussianMixture(n_components, d)
     model.fit_em(data)
 
     # .. used to predict the data points as they where shifted
     y = model.predict(data)
-    # model.set_marginal(indices=[0])
     x1 = model.predict(data[:, 0], marginals=[0])
-    # model.set_marginal(indices=[1])
     x2 = model.predict(data[:, 1], marginals=[1])
 
-    plot(data, y, x1, x2, n)
+    if use_plots:
+        plot(data, y, x1, x2, n)
 
-    # model.set_marginal(indices=[])
     data, y = model.sample(n * n_components)
     x1, _ = model.sample(n * n_components, marginals=[0])
     x2, _ = model.sample(n * n_components, marginals=[1])
-    plot(data, y, x1, x2, n, sample=True)
+
+    if use_plots:
+        plot(data, y, x1, x2, n, sample=True)
 
 
 def plot(data, y, x1, x2, n, sample=False):

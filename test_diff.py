@@ -67,7 +67,6 @@ def test(model, device, test_loader, MILoss):
             data, target = data.to(device), target.to(device)
             output = model(data)
             # loss = -
-            test_loss += MILoss(output, target).item()
             # F.nll_loss(
             #     output, target, reduction="sum"
             # ).item()  # sum up batch loss
@@ -94,14 +93,14 @@ def main():
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=64,
+        default=256,
         metavar="N",
         help="input batch size for training (default: 64)",
     )
     parser.add_argument(
         "--test-batch-size",
         type=int,
-        default=1000,
+        default=500,
         metavar="N",
         help="input batch size for testing (default: 1000)",
     )
@@ -188,7 +187,13 @@ def main():
     def MILoss(predict, yhat):
         yohe = torch.nn.functional.one_hot(yhat, num_classes=10)
         sample = torch.cat([predict, yohe], dim=1)
-        model = MIGM(10, 20, init_means="kmeans", verbose=False)
+        model = MIGM(
+            n_components=4,
+            n_features=20,
+            init_means="kmeans",
+            verbose=False,
+            device=device,
+        )
         model.to(device)
         model.fit(sample)
         indices = [i for i in range(0, 20)]
