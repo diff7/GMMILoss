@@ -16,7 +16,7 @@ class Net(nn.Module):
         self.dropout1 = nn.Dropout(0.25)
         self.dropout2 = nn.Dropout(0.5)
         self.fc1 = nn.Linear(9216, 128)
-        self.fc2 = nn.Linear(128, 10)
+        self.fc2 = nn.Linear(128, 2)
 
     def forward(self, x):
         x = self.conv1(x)
@@ -181,23 +181,29 @@ def main():
     )
     dataset1 = datasets.MNIST("../data", train=True, download=True, transform=transform)
     dataset2 = datasets.MNIST("../data", train=False, transform=transform)
-    train_loader = torch.utils.data.DataLoader(dataset1, **train_kwargs)
-    test_loader = torch.utils.data.DataLoader(dataset2, **test_kwargs)
+    train_loader = torch.utils.data.DataLoader(
+        [s for s in dataset1 if s[1] in [0, 1]], **train_kwargs
+    )
+    test_loader = torch.utils.data.DataLoader(
+        [s for s in dataset2 if s[1] in [0, 1]], **test_kwargs
+    )
 
     def MILoss(predict, yhat):
-        yohe = torch.nn.functional.one_hot(yhat, num_classes=10)
-        sample = torch.cat([predict, yohe], dim=1)
+        yohe = torch.nn.functional.one_hot(yhat, num_classes=2)
+        sample = torch.cat(
+            [torch.exp(predict[:, 0]).unsqueeze(1), yhat.unsqueeze(1)], dim=1
+        )
         model = MIGM(
-            n_components=4,
-            n_features=20,
-            init_means="kmeans",
+            n_components=10,
+            n_features=2,
+            init_means="random",
             verbose=False,
             device=device,
         )
         model.to(device)
         model.fit(sample)
-        indices = [i for i in range(0, 20)]
-        loss = model.compute_mi(sample, indices[:10], indices[10:])
+        indices = [i for i in range(0, 2)]
+        loss = model.compute_mi(sample, indices[:1], indices[1:])
         return loss
 
     model = Net().to(device)
