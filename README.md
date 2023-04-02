@@ -8,4 +8,6 @@ Differentiable Mutual information Loss with pytorch
 
 Todo: 
 
-- [] works quite bad with High dimensional data,  check this paper: https://openreview.net/forum?id=SvrYl-FDq2
+-[] update code 
+-[] works quite bad with High dimensional data,  check this paper: https://openreview.net/forum?id=SvrYl-FDq2
+
